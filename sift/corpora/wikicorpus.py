@@ -10,7 +10,10 @@
 import re
 import xml.etree.cElementTree as ET
 
-from htmlentitydefs import name2codepoint
+try:
+    from htmlentitydefs import name2codepoint
+except ImportError:
+    from html.entities import name2codepoint
 
 try:
     unichr(0)
