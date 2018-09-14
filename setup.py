@@ -1,17 +1,17 @@
 from setuptools import setup, find_packages
 
-__version__ = '0.3.0'
+__version__ = '0.3.1'
 __pkg_name__ = 'textsift'
 
 setup(
-    name = __pkg_name__,
-    version = __version__,
-    description = 'Text modelling framework',
+    name=__pkg_name__,
+    version=__version__,
+    description='Text modelling framework',
     author='Andrew Chisholm',
-    packages = find_packages(),
-    license = 'MIT',
-    url = 'https://github.com/wikilinks/sift',
-    scripts = [
+    packages=find_packages(),
+    license='MIT',
+    url='https://github.com/wikilinks/sift',
+    scripts=[
         'scripts/sift-notebook',
         'scripts/download-wikipedia'
     ],
@@ -23,7 +23,7 @@ setup(
         'Programming Language :: Python :: 2.7',
         'Topic :: Text Processing :: Linguistic'
     ],
-    install_requires = [
+    install_requires=[
         "ujson",
         "numpy",
         "pattern",
@@ -36,5 +36,5 @@ setup(
         "scipy",
         "scikit-learn"
     ],
-    test_suite = __pkg_name__ + '.test'
+    test_suite=__pkg_name__ + '.test'
 )

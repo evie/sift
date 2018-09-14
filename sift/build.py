@@ -1,15 +1,15 @@
-import re
+import argparse
+import logging
 import os
+import re
 import shutil
 import textwrap
-import argparse
-import ujson as json
 
 from pyspark import SparkContext, SparkConf
+
 from sift.format import ModelFormat
 
-import logging
-log = logging.getLogger() 
+log = logging.getLogger()
 
 class DatasetBuilder(object):
     """ Wrapper for modules which extract models of entities or text from a corpus of linked documents """
@@ -45,7 +45,7 @@ class DatasetBuilder(object):
                 shutil.rmtree(self.output_path)
             m.saveAsTextFile(self.output_path, 'org.apache.hadoop.io.compress.GzipCodec')
         elif self.sample > 0:
-            print '\n'.join(str(i) for i in m.take(self.sample))
+            print('\n'.join(str(i) for i in m.take(self.sample)))
 
         log.info('Done.')
 

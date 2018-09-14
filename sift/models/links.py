@@ -1,13 +1,13 @@
-import ujson as json
-
-from operator import add
 from collections import Counter
 from itertools import chain
+from operator import add
 
-from sift.dataset import ModelBuilder, Documents, Model
-from sift.util import trim_link_subsection, trim_link_protocol, ngrams
+import ujson as json
 
 from sift import logging
+from sift.dataset import ModelBuilder, Model
+from sift.util import trim_link_subsection, trim_link_protocol, ngrams
+
 log = logging.getLogger()
 
 class EntityCounts(ModelBuilder, Model):
@@ -28,11 +28,12 @@ class EntityCounts(ModelBuilder, Model):
 
         return links\
             .map(lambda l: (l, 1))\
-            .reduceByKey(add)\
-            .filter(lambda (t, c): c > self.min_count)
+            .reduceByKey(add) \
+            .filter(lambda r: r[1] > self.min_count)
 
     @staticmethod
-    def format_item((target, count)):
+    def format_item(item):
+        target, count = item
         return {
             '_id': target,
             'count': count
@@ -62,18 +63,19 @@ class EntityNameCounts(ModelBuilder, Model):
         m = docs.flatMap(lambda d: self.iter_anchor_target_pairs(d))
 
         if self.filter_target:
-            m = m.filter(lambda (a, t): t.startswith(self.filter_target))
+            m = m.filter(lambda r: r[1].startswith(self.filter_target))
 
         return m\
             .groupByKey()\
             .mapValues(Counter)
 
     @staticmethod
-    def format_item((anchor, counts)):
+    def format_item(item):
+        anchor, counts = item
         return {
             '_id': anchor,
             'counts': dict(counts),
-            'total': sum(counts.itervalues())
+            'total': sum(counts.values())
         }
 
 class NamePartCounts(ModelBuilder, Model):
@@ -103,34 +105,39 @@ class NamePartCounts(ModelBuilder, Model):
         if parts:
             yield parts[0], 'B'
             yield parts[-1], 'E'
-            for i in xrange(1, len(parts)-1):
+            for i in range(1, len(parts) - 1):
                 yield parts[i], 'I'
 
     def build(self, docs):
         part_counts = docs\
-            .flatMap(self.iter_anchors)\
-            .flatMap(lambda a: chain.from_iterable(self.iter_span_count_types(a, i) for i in xrange(1, self.max_ngram+1)))\
-            .map(lambda p: (p, 1))\
-            .reduceByKey(add)\
-            .map(lambda ((term, spantype), count): (term, (spantype, count)))
+            .flatMap(self.iter_anchors) \
+            .flatMap(
+            lambda a: chain.from_iterable(self.iter_span_count_types(a, i) for i in range(1, self.max_ngram + 1))) \
+            .map(lambda p: (p, 1)) \
+            .reduceByKey(add) \
+            .map(lambda r: (r[0][0], (r[0][1], r[1])))
+        # .map(lambda ((term, spantype), count): (term, (spantype, count)))
 
         part_counts += docs\
             .flatMap(lambda d: ngrams(d['text'], self.max_ngram))\
-            .map(lambda t: (t, 1))\
-            .reduceByKey(add)\
-            .filter(lambda (t, c): c > 1)\
-            .map(lambda (t, c): (t, ('O', c)))
+            .map(lambda t: (t, 1)) \
+            .reduceByKey(add) \
+            .filter(lambda r: r[1] > 1) \
+            .map(lambda r: (r[0], ('O', r[1])))
+        # .filter(lambda (t, c): c > 1)\
+        # .map(lambda (t, c): (t, ('O', c)))
 
         return part_counts\
-            .groupByKey()\
-            .mapValues(dict)\
-            .filter(lambda (t, cs): 'O' in cs and len(cs) > 1)
+            .groupByKey() \
+            .mapValues(dict) \
+            .filter(lambda r: 'O' in r[1] and len(r[1]) > 1)
+        # .filter(lambda (t, cs): 'O' in cs and len(cs) > 1)
 
     @staticmethod
-    def format_item((term, part_counts)):
+    def format_item(item):
         return {
-            '_id': term,
-            'counts': dict(part_counts)
+            '_id': item[0],
+            'counts': dict(item[1])
         }
 
 class EntityInlinks(ModelBuilder, Model):
@@ -139,13 +146,14 @@ class EntityInlinks(ModelBuilder, Model):
         return docs\
             .flatMap(lambda d: ((d['_id'], l) for l in set(l['target'] for l in d['links'])))\
             .mapValues(trim_link_subsection)\
-            .mapValues(trim_link_protocol)\
-            .map(lambda (k, v): (v, k))\
+            .mapValues(trim_link_protocol) \
+            .map(lambda r: (r[1], r[0])) \
             .groupByKey()\
             .mapValues(list)
 
     @staticmethod
-    def format_item((target, inlinks)):
+    def format_item(item):
+        target, inlinks = item
         return {
             '_id': target,
             'inlinks': inlinks
@@ -160,20 +168,24 @@ class EntityVocab(ModelBuilder, Model):
     def build(self, docs):
         log.info('Building entity vocab: df rank range=(%i, %i)', self.min_rank, self.max_rank)
         m = super(EntityVocab, self)\
-            .build(docs)\
-            .map(lambda (target, count): (count, target))\
-            .sortByKey(False)\
-            .zipWithIndex()\
-            .map(lambda ((df, t), idx): (t, (df, idx)))
+            .build(docs) \
+            .map(lambda r: (r[1], r[0])) \
+            .sortByKey(False) \
+            .zipWithIndex() \
+            .map(lambda r: (r[0][1], (r[0][0], r[1])))
+        # .map(lambda ((df, t), idx): (t, (df, idx)))
 
         if self.min_rank != None:
-            m = m.filter(lambda (t, (df, idx)): idx >= self.min_rank)
+            # m = m.filter(lambda (t, (df, idx)): idx >= self.min_rank)
+            m = m.filter(lambda r: r[1][1] >= self.min_rank)
         if self.max_rank != None:
-            m = m.filter(lambda (t, (df, idx)): idx < self.max_rank)
+            # m = m.filter(lambda (t, (df, idx)): idx < self.max_rank)
+            m = m.filter(lambda r: r[1][1] < self.max_rank)
         return m
 
     @staticmethod
-    def format_item((term, (f, idx))):
+    def format_item(item):
+        term, (f, idx) = item
         return {
             '_id': term,
             'count': f,
@@ -202,11 +214,12 @@ class EntityComentions(ModelBuilder, Model):
 
     def build(self, docs):
         return docs\
-            .map(lambda d: (d['_id'], list(self.iter_unique_links(d))))\
-            .filter(lambda (uri, es): es)
+            .map(lambda d: (d['_id'], list(self.iter_unique_links(d)))) \
+            .filter(lambda r: r[1])
 
     @staticmethod
-    def format_item((uri, es)):
+    def format_item(item):
+        uri, es = item
         return {
             '_id': uri,
             'entities': es
@@ -216,7 +229,9 @@ class MappedEntityComentions(EntityComentions):
     """ Entity comentions with entities mapped to a numeric index """
     def build(self, docs, entity_vocab):
         ev = sc.broadcast(dict(ev.collect()))
-        return super(MappedEntityComentions, self)\
-            .build(docs)\
-            .map(lambda (uri, es): (uri, [ev.value[e] for e in es if e in ev.value]))\
-            .filter(lambda (uri, es): es)
+        return super(MappedEntityComentions, self) \
+            .build(docs) \
+            .map(lambda r: (r[0], [ev.value[e] for e in r[1] if e in ev.value])) \
+            .filter(lambda r: r[1])
+        # .map(lambda (uri, es): (uri, [ev.value[e] for e in es if e in ev.value]))\
+        # .filter(lambda (uri, es): es)

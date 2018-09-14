@@ -1,13 +1,14 @@
 import re
+
+import pycld2 as cld
+from bs4 import BeautifulSoup
 from cStringIO import StringIO
-from warc import WARCFile
 from dragnet import content_extractor, BlockifyError
 from lxml import etree
-from bs4 import BeautifulSoup
-from sift.dataset import ModelBuilder, Model, Documents
-from sift import logging
-import pycld2 as cld
 from pycld2 import error as cld_error
+from warc import WARCFile
+
+from sift.dataset import ModelBuilder, Model, Documents
 
 LINKS_RE = re.compile(r'<a href="(.+?)">(.+?)</a>')
 
@@ -48,17 +49,18 @@ class WARCCorpus(ModelBuilder, Model):
                 "org.apache.hadoop.mapreduce.lib.input.TextInputFormat",
                 "org.apache.hadoop.io.LongWritable",
                 "org.apache.hadoop.io.Text",
-                conf = { "textinputformat.record.delimiter": PAGE_DELIMITER })\
-            .filter(lambda (_, part): part)\
-            .map(lambda (_, part): PAGE_DELIMITER+part.encode('utf-8'))\
+                conf = { "textinputformat.record.delimiter": PAGE_DELIMITER }) \
+            .filter(lambda r: r[1]) \
+            .map(lambda r: PAGE_DELIMITER + r[1].encode('utf-8')) \
             .flatMap(self.parse_warc_content)
 
         if self.language != None:
-            warcs = warcs.filter(lambda (url, content): self.try_get_lang(content) == self.language)
+            warcs = warcs.filter(lambda r: self.try_get_lang(r[1]) == self.language)
         return warcs
 
     @staticmethod
-    def format_item((url, content)):
+    def format_item(item):
+        url, content = item
         return {
             '_id': url,
             'content': content,
@@ -68,7 +70,8 @@ class CommonCrawlArticles(ModelBuilder, Documents):
     THRESHOLD_CONTENT_SZ = 250000
 
     @staticmethod
-    def clean_content((url, content)):
+    def clean_content(item):
+        url, content = item
         try:
             blocks = content_extractor.analyze(content, blocks=True)
             content = ''.join(etree.tostring(b.features['block_start_element']) for b in blocks)

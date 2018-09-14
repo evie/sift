@@ -1,9 +1,7 @@
-import ujson as json
-
+from sift import logging
 from sift.corpora import wikicorpus
 from sift.dataset import ModelBuilder, Model, Redirects, Documents
 
-from sift import logging
 log = logging.getLogger()
 
 class WikipediaCorpus(ModelBuilder, Model):
@@ -17,14 +15,15 @@ class WikipediaCorpus(ModelBuilder, Model):
                 "org.apache.hadoop.mapreduce.lib.input.TextInputFormat",
                 "org.apache.hadoop.io.LongWritable",
                 "org.apache.hadoop.io.Text",
-                conf = { "textinputformat.record.delimiter": PAGE_DELIMITER })\
-            .map(lambda (_, part): (part.find(PAGE_START), part))\
-            .filter(lambda (offset, _): offset >= 0)\
-            .map(lambda (offset, content): content[offset:]+PAGE_END)\
+                conf = { "textinputformat.record.delimiter": PAGE_DELIMITER }) \
+            .map(lambda r: (r[1].find(PAGE_START), r[1])) \
+            .filter(lambda r: r[0] >= 0) \
+            .map(lambda r: r[1][r[0]:] + PAGE_END) \
             .map(wikicorpus.extract_page)
 
     @staticmethod
-    def format_item((title, ns, pid, redirect, content)):
+    def format_item(item):
+        title, ns, pid, redirect, content = item
         return {
             '_id': title,
             'pid': pid,
@@ -43,24 +42,27 @@ class WikipediaRedirects(ModelBuilder, Redirects):
         redirects = pages\
             .filter(lambda page: page['redirect'] != None)\
             .map(lambda page: (page['_id'], page['redirect']))\
-            .mapValues(wikicorpus.normalise_wikilink)\
-            .map(lambda (s, t): (s, pfx+t))
+            .mapValues(wikicorpus.normalise_wikilink) \
+            .map(lambda r: (r[0], pfx + r[1]))
 
         if self.resolve_transitive:
             redirects = redirects.cache()
 
-            num_targets = redirects\
-                .map(lambda (k,v): v)\
+            num_targets = redirects \
+                .map(lambda r: r[1]) \
                 .distinct()\
                 .count()
 
-            redirects = redirects\
-                .map(lambda (s, t): (t, s)).leftOuterJoin(redirects)\
-                .map(lambda (target, (source, redirect)): (source, redirect or target))
+            redirects = redirects \
+                .map(lambda r: (r[1], r[0])).leftOuterJoin(redirects) \
+                .map(lambda r: (r[1][0], r[1][1] or r[0]))
+            # .map(lambda (s, t): (t, s)).leftOuterJoin(redirects) \
+            # .map(lambda (target, (source, redirect)): (source, redirect or target))
 
             if verbose:
                 redirects = redirects.cache()
-                final_num_targets = redirects.map(lambda (k,v): v).distinct().count()
+                # final_num_targets = redirects.map(lambda (k,v): v).distinct().count()
+                final_num_targets = redirects.map(lambda r: r[1]).distinct().count()
                 log.info('Resolved %i transitive redirects...', num_targets - final_num_targets)
 
         return redirects.distinct()
@@ -79,13 +81,20 @@ class WikipediaArticles(ModelBuilder, Documents):
             articles.cache()
 
             # redirect set is typically too large to be broadcasted for a map-side join
-            articles = articles\
-                .flatMap(lambda (pid, (text, links)): ((t, (pid, span)) for t, span in links))\
-                .leftOuterJoin(redirects)\
-                .map(lambda (t, ((pid, span), r)): (pid, (r if r else t, span)))\
-                .groupByKey()\
-                .mapValues(list)\
-                .join(articles)\
-                .map(lambda (pid, (links, (text, _))): (pid, (text, links)))
+            articles = articles \
+                .flatMap(lambda r: ((t, (r[0], span)) for t, span in r[1][1])) \
+                .leftOuterJoin(redirects) \
+                .map(lambda r: (r[1][0][0], (r if r else t, r[1][0][1]))) \
+                .groupByKey() \
+                .mapValues(list) \
+                .join(articles) \
+                .map(lambda r: (r[0], (r[1][1][0], r[1][0])))
+            # .flatMap(lambda (pid, (text, links)): ((t, (pid, span)) for t, span in links))\
+            # .leftOuterJoin(redirects)\
+            # .map(lambda (t, ((pid, span), r)): (pid, (r if r else t, span)))\
+            # .groupByKey()\
+            # .mapValues(list)\
+            # .join(articles)\
+            # .map(lambda (pid, (links, (text, _))): (pid, (text, links)))
 
         return articles

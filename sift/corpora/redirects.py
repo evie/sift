@@ -1,10 +1,8 @@
-import urllib
 import ujson as json
 
-from sift.dataset import Model, DocumentModel
-from sift.util import trim_link_protocol, iter_sent_spans, ngrams
-
 from sift import logging
+from sift.dataset import Model, DocumentModel
+
 log = logging.getLogger()
 
 class MapRedirects(Model):
@@ -21,26 +19,26 @@ class MapRedirects(Model):
 
     @staticmethod
     def map_redirects(source, target):
-        return source\
-            .map(lambda (s, t): (t, s))\
-            .leftOuterJoin(target)\
-            .map(lambda (t, (s, r)): (s, r or t))\
+        return source \
+            .map(lambda r: (r[1], r[0])) \
+            .leftOuterJoin(target) \
+            .map(lambda r: (r[1][0], r[1][1] or r[0])) \
             .distinct()
 
     def build(self, from_rds, to_rds):
         # map source of destination kb
         # e.g. (a > b) and (a > c) becomes (b > c)
         mapped_to = to_rds\
-            .leftOuterJoin(from_rds)\
-            .map(lambda (s, (t, f)): (f or s, t))\
-
+            .leftOuterJoin(from_rds) \
+            .map(lambda r: (r[1][1] or r[0], r[1][0])) \
+ \
         # map target of origin kb
         # e.g. (a > b) and (b > c) becomes (a > c)
-        mapped_from = from_rds\
-            .map(lambda (s, t): (t, s))\
-            .leftOuterJoin(mapped_to)\
-            .map(lambda (t, (s, r)): (s, r))\
-            .filter(lambda (s, t): t)
+        mapped_from = from_rds \
+            .map(lambda r: (r[0], r[1])) \
+            .leftOuterJoin(mapped_to) \
+            .map(lambda r: (r[1][0], r[1][1])) \
+            .filter(lambda r: r[1])
 
         rds = (mapped_from + mapped_to).distinct()
         rds.cache()
@@ -60,10 +58,10 @@ class MapRedirects(Model):
             .map(lambda r: (r['_id'], r['target']))
 
     def format_items(self, model):
-        return model\
-            .map(lambda (source, target): {
-                '_id': source,
-                'target': target
+        return model \
+            .map(lambda r: {
+            '_id': r[0],
+            'target': r[1]
             })
 
     @classmethod
@@ -93,14 +91,14 @@ class RedirectDocuments(DocumentModel):
             return doc
 
         return corpus\
-            .map(lambda d: (d['_id'], set(l['target'] for l in d['links'])))\
-            .flatMap(lambda (pid, links): [(t, pid) for t in links])\
-            .leftOuterJoin(redirects)\
-            .map(lambda (t, (pid, r)): (pid, (t, r if r else t)))\
+            .map(lambda d: (d['_id'], set(l['target'] for l in d['links']))) \
+            .flatMap(lambda r: [(t, r[0]) for t in r[1]]) \
+            .leftOuterJoin(redirects) \
+            .map(lambda r: (r[1][0], (r[0], r[1][1] if r[1][1] else r[0]))) \
             .groupByKey()\
             .mapValues(dict)\
-            .join(articles)\
-            .map(lambda (pid, (rds, doc)): map_doc_links(doc, rds))
+            .join(articles) \
+            .map(lambda r: map_doc_links(r[1][1], r[1][0]))
 
     def format_items(self, model):
         return model

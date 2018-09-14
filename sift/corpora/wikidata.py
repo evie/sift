@@ -1,9 +1,8 @@
 import ujson as json
 
-from sift.corpora import wikicorpus
+from sift import logging
 from sift.dataset import ModelBuilder, Model, Relations
 
-from sift import logging
 log = logging.getLogger()
 
 ENTITY_PREFIX = 'Q'
@@ -23,7 +22,8 @@ class WikidataCorpus(ModelBuilder, Model):
             .map(lambda i: (i['id'], i))
 
     @staticmethod
-    def format_item((wid, item)):
+    def format_item(row):
+        wid, item = row
         return {
             '_id': wid,
             'data': item
@@ -33,7 +33,7 @@ class WikidataRelations(ModelBuilder, Relations):
     """ Prepare a corpus of relations from wikidata """
     @staticmethod
     def iter_relations_for_item(item):
-        for pid, statements in item.get('claims', {}).iteritems():
+        for pid, statements in item.get('claims', {}).items():
             for statement in statements:
                 if statement['mainsnak'].get('snaktype') == 'value':
                     datatype = statement['mainsnak'].get('datatype')
@@ -49,28 +49,28 @@ class WikidataRelations(ModelBuilder, Relations):
             .filter(lambda item: item['_id'].startswith(ENTITY_PREFIX))
 
         entity_labels = entities\
-            .map(lambda item: (item['_id'], item['data'].get('labels', {}).get('en', {}).get('value', None)))\
-            .filter(lambda (pid, label): label)\
-            .map(lambda (pid, label): (int(pid[1:]), label))
+            .map(lambda item: (item['_id'], item['data'].get('labels', {}).get('en', {}).get('value', None))) \
+            .filter(lambda r: r[1]) \
+            .map(lambda r: (int(r[0][1:]), r[1]))
 
         wiki_entities = entities\
-            .map(lambda item: (item['data'].get('sitelinks', {}).get('enwiki', {}).get('title', None), item['data']))\
-            .filter(lambda (e, _): e)\
+            .map(lambda item: (item['data'].get('sitelinks', {}).get('enwiki', {}).get('title', None), item['data'])) \
+            .filter(lambda r: r[0]) \
             .cache()
        
         predicate_labels = corpus\
             .filter(lambda item: item['_id'].startswith(PREDICATE_PREFIX))\
-            .map(lambda item: (item['_id'], item['data'].get('labels', {}).get('en', {}).get('value', None)))\
-            .filter(lambda (pid, label): label)\
+            .map(lambda item: (item['_id'], item['data'].get('labels', {}).get('en', {}).get('value', None))) \
+            .filter(lambda r: r[1]) \
             .cache()
 
-        relations = wiki_entities\
-            .flatMap(lambda (eid, item): ((pid, (value, eid)) for pid, value in self.iter_relations_for_item(item)))\
-            .join(predicate_labels)\
-            .map(lambda (pid, ((value, eid), label)): (value, (label, eid)))
+        relations = wiki_entities \
+            .flatMap(lambda r: ((pid, (value, r[0])) for pid, value in self.iter_relations_for_item(r[1]))) \
+            .join(predicate_labels) \
+            .map(lambda r: (r[1][0][0], (r[1][1], r[1][0][1])))
 
         return relations\
-            .leftOuterJoin(entity_labels)\
-            .map(lambda (value, ((label, eid), value_label)): (eid, (label, value_label or value)))\
+            .leftOuterJoin(entity_labels) \
+            .map(lambda r: (r[1][0][1], (r[1][0][0], r[1][1] or r[0]))) \
             .groupByKey()\
             .mapValues(dict)

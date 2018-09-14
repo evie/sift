@@ -1,16 +1,20 @@
 import math
-import numpy
-import ujson as json
 from bisect import bisect_left, bisect_right
 from operator import add
-from collections import Counter
 
-from sift.models.links import EntityVocab
-from sift.dataset import ModelBuilder, Documents, Model, Mentions, IndexedMentions, Vocab
-from sift.util import ngrams, iter_sent_spans, trim_link_subsection, trim_link_protocol
+import numpy
 
 from sift import logging
+from sift.dataset import ModelBuilder, Model, Mentions, IndexedMentions, Vocab
+from sift.util import ngrams, iter_sent_spans, trim_link_subsection, trim_link_protocol
+
 log = logging.getLogger()
+
+try:
+    _ = unicode('')
+except NameError:
+    unicode = str
+
 
 class TermFrequencies(ModelBuilder, Model):
     """ Get term frequencies over a corpus """
@@ -26,11 +30,12 @@ class TermFrequencies(ModelBuilder, Model):
         return m\
             .flatMap(lambda text: ngrams(text, self.max_ngram))\
             .map(lambda t: (t, 1))\
-            .reduceByKey(add)\
-            .filter(lambda (k,v): v > 1)
+            .reduceByKey(add) \
+            .filter(lambda k_v: k_v[1] > 1)
 
     @staticmethod
-    def format_item(self, (term, count)):
+    def format_item(self, item):
+        term, count = item
         return {
             '_id': term,
             'count': count,
@@ -84,7 +89,8 @@ class EntityMentions(ModelBuilder, Mentions):
     def build(self, docs):
         m = docs.flatMap(lambda d: self.iter_mentions(d, self.sentence_window, self.normalize_url, self.strict_sentences))
         if self.lowercase:
-            m = m.map(lambda (t, src, m, s): (t, src, m.lower(), s))
+            # m = m.map(lambda (t, src, m, s): (t, src, m.lower(), s))
+            m = m.map(lambda r: (r[0], r[1], r[2].lower(), r[3]))
         return m
 
 class IndexMappedMentions(EntityMentions, IndexedMentions):
@@ -96,7 +102,8 @@ class IndexMappedMentions(EntityMentions, IndexedMentions):
             .map(lambda m: self.transform(m, tv))
 
     @staticmethod
-    def transform((target, source, text, span), vocab):
+    def transform(item, vocab):
+        target, source, text, span = item
         vocab = vocab.value
 
         start, stop = span
@@ -122,8 +129,8 @@ class TermDocumentFrequencies(ModelBuilder):
         return m\
             .flatMap(lambda text: set(ngrams(text, self.max_ngram)))\
             .map(lambda t: (t, 1))\
-            .reduceByKey(add)\
-            .filter(lambda (k,v): v > self.min_df)
+            .reduceByKey(add) \
+            .filter(lambda k_v: k_v[1] > self.min_df)
 
 class TermVocab(TermDocumentFrequencies, Vocab):
     """ Generate unique indexes for termed based on their document frequency ranking. """
@@ -134,20 +141,24 @@ class TermVocab(TermDocumentFrequencies, Vocab):
 
     def build(self, docs):
         m = super(TermVocab, self)\
-            .build(docs)\
-            .map(lambda (t, df): (df, t))\
-            .sortByKey(False)\
-            .zipWithIndex()\
-            .map(lambda ((df, t), idx): (t, (df, idx)))
+            .build(docs) \
+            .map(lambda t_df: (t_df[1], t_df[0])) \
+            .sortByKey(False) \
+            .zipWithIndex() \
+            .map(lambda r: (r[0][1], (r[0][0], r[1])))
+        # .map(lambda ((df, t), idx): (t, (df, idx)))
 
         if self.min_rank != None:
-            m = m.filter(lambda (t, (df, idx)): idx >= self.min_rank)
+            # m = m.filter(lambda (t, (df, idx)): idx >= self.min_rank)
+            m = m.filter(lambda r: r[1][1] >= self.min_rank)
         if self.max_rank != None:
-            m = m.filter(lambda (t, (df, idx)): idx < self.max_rank)
+            # m = m.filter(lambda (t, (df, idx)): idx < self.max_rank)
+            m = m.filter(lambda r: r[1][1] < self.max_rank)
         return m
 
     @staticmethod
-    def format_item((term, (f, idx))):
+    def format_item(item):
+        term, (f, idx) = item
         return {
             '_id': term,
             'count': f,
@@ -162,12 +173,13 @@ class TermIdfs(TermDocumentFrequencies, Model):
         dfs = super(TermIdfs, self).build(corpus)
 
         log.info('Building idf model: N=%i', N)
-        return dfs\
-            .map(lambda (term, (df, rank)): (term, df))\
+        return dfs \
+            .map(lambda r: (r[0], r[1][0])) \
             .mapValues(lambda df: math.log(N/df))
 
     @staticmethod
-    def format_item((term, idf)):
+    def format_item(item):
+        term, idf = item
         return {
             '_id': term,
             'idf': idf,
@@ -180,16 +192,18 @@ class EntityMentionTermFrequency(ModelBuilder, Model):
         self.normalize = normalize
 
     def build(self, mentions, idfs):
-        m = mentions\
-            .map(lambda (target, (span, text)): (target, text))\
-            .mapValues(lambda v: ngrams(v, self.max_ngram))\
-            .flatMap(lambda (target, tokens): (((target, t), 1) for t in tokens))\
-            .reduceByKey(add)\
-            .map(lambda ((target, token), count): (token, (target, count)))\
-            .leftOuterJoin(idfs)\
-            .filter(lambda (token, ((target, count), idf)): idf != None)\
-            .map(lambda (token, ((target, count), idf)): (target, (token, math.sqrt(count)*idf)))\
+        m = mentions \
+            .map(lambda r: (r[0], r[1][1])) \
+            .mapValues(lambda v: ngrams(v, self.max_ngram)) \
+            .flatMap(lambda r: (((r[0], t), 1) for t in r[1])) \
+            .reduceByKey(add) \
+            .map(lambda r: (r[0][1], (r[0][0], r[1]))) \
+            .leftOuterJoin(idfs) \
+            .filter(lambda r: r[1][1] != None) \
+            .map(lambda r: (r[1][0][0], (r[0], math.sqrt(r[1][0][1]) * r[1][1]))) \
             .groupByKey()
+        # .map(lambda (token, ((target, count), idf)): (target, (token, math.sqrt(count) * idf))) \
+        # .groupByKey()
 
         return m.mapValues(self.normalize_counts if self.normalize else list)
 
@@ -199,7 +213,8 @@ class EntityMentionTermFrequency(ModelBuilder, Model):
         return [(k, v/norm) for k, v in counts]
 
     @staticmethod
-    def format_item((link, counts)):
+    def format_item(item):
+        link, counts = item
         return {
             '_id': link,
             'counts': dict(counts),

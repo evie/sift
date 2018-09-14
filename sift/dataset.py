@@ -24,12 +24,14 @@ class Model(object):
 
 class Redirects(Model):
     @staticmethod
-    def format_item((source, target)):
+    def format_item(item):
+        source, target = item
         return {'_id': source, 'target': target}
 
 class Vocab(Model):
     @staticmethod
-    def format_item((term, (count, rank))):
+    def format_item(item):
+        term, (count, rank) = item
         return {
             '_id': term,
             'count': count,
@@ -38,7 +40,8 @@ class Vocab(Model):
 
 class Mentions(Model):
     @staticmethod
-    def format_item((target, source, text, span)):
+    def format_item(item):
+        target, source, text, span = item
         return {
             '_id': target,
             'source': source,
@@ -48,7 +51,8 @@ class Mentions(Model):
 
 class IndexedMentions(Model):
     @staticmethod
-    def format_item((target, source, text, span)):
+    def format_item(item):
+        target, source, text, span = item
         return {
             '_id': target,
             'source': source,
@@ -58,7 +62,8 @@ class IndexedMentions(Model):
 
 class Documents(Model):
     @staticmethod
-    def format_item((uri, (text, links))):
+    def format_item(item):
+        uri, (text, links) = item
         return {
             '_id': uri,
             'text': text,
@@ -71,7 +76,8 @@ class Documents(Model):
 
 class Relations(Model):
     @staticmethod
-    def format_item((uri, relations)):
+    def format_item(item):
+        uri, relations = item
         return {
             '_id': uri,
             'relations': relations

@@ -12,6 +12,12 @@ import xml.etree.cElementTree as ET
 
 from htmlentitydefs import name2codepoint
 
+try:
+    unichr(0)
+except NameError:
+    unichr = chr
+
+
 wikilink_prefix = 'en.wikipedia.org/wiki/'
 
 RE_P0 = re.compile('<!--.*?-->', re.DOTALL | re.UNICODE) # comments
@@ -42,7 +48,9 @@ RE_EMPTY_PARENS = re.compile(r' \(\s*\)')
 
 RE_HTML_ENT = re.compile("&#?(\w+);")
 
-def remove_markup((uri, text)):
+
+def remove_markup(item):
+    uri, text = item
     text = re.sub(RE_P2, "", text)
 
     # TODO: may be desirable to extract captions for files and images and insert them back into the document
